@@ -1,6 +1,19 @@
+# Python
 __pycache__/
 *.pyc
-.ipynb_checkpoints/
+*.pyo
 .venv/
 .env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model (auto-downloaded by code)
 pose_landmarker.task
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
