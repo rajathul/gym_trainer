@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Squat Trainer — AI Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ══ Reset & variables ═══════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --white:  #f6f6f6;
+      --silver: #e0dbf3;
+      --amber:  #f3ba60;
+      --dream:  #b6b1c0;
+      --haze:   #736a6a;
+      --lead:   #202022;
+      --green:  #3ecf8e;
+      --red:    #f05252;
+      --r:      10px;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      background: var(--white);
+      color: var(--lead);
+      -webkit-font-smoothing: antialiased;
+      moz-osx-font-smoothing: grayscale;
+    }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ══ Header ══════════════════════════════════════════════════ */
+    header {
+      height: 58px;
+      flex-shrink: 0;
+      background: var(--lead);
+      border-bottom: 2px solid var(--amber);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      gap: 16px;
+      position: relative;
+      z-index: 20;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 1.2rem;
+      letter-spacing: 0.06em;
+      color: var(--white);
+      user-select: none;
+    }
+
+    .logo-mark {
+      width: 30px;
+      height: 30px;
+      background: var(--amber);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .logo em { font-style: normal; color: var(--amber); }
+
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .timer {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--dream);
+      letter-spacing: 0.06em;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 5px 12px;
+      border-radius: 6px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--haze);
+      flex-shrink: 0;
+      transition: background 0.4s;
+    }
+
+    .status-dot.live {
+      background: var(--green);
+      animation: ripple 1.8s infinite;
+    }
+
+    @keyframes ripple {
+      0%   { box-shadow: 0 0 0 0 rgba(62,207,142,0.55); }
+      70%  { box-shadow: 0 0 0 8px rgba(62,207,142,0); }
+      100% { box-shadow: 0 0 0 0 rgba(62,207,142,0); }
+    }
+
+    .status-text {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--haze);
+      transition: color 0.4s;
+    }
+
+    .status-text.live { color: var(--green); }
+
+    .btn-reset {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--dream);
+      background: transparent;
+      border: 1.5px solid rgba(182,177,192,0.28);
+      border-radius: 7px;
+      padding: 7px 16px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, transform 0.1s;
+    }
+
+    .btn-reset:hover  { border-color: var(--amber); color: var(--amber); }
+    .btn-reset:active { transform: scale(0.95); }
+
+    /* ══ Main layout ══════════════════════════════════════════════ */
+    .main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 60fr 40fr;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ══ Video panel ═════════════════════════════════════════════ */
+    .video-panel {
+      background: var(--lead);
+      position: relative;
+      overflow: hidden;
+    }
+
+    #videoFeed {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Subtle vignette */
+    .video-panel::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 50%, rgba(32,32,34,0.5) 100%);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .video-badge {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 2;
+      background: rgba(32,32,34,0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(243,186,96,0.22);
+      border-radius: 8px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .video-badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--red);
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .video-badge-text {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: rgba(246,246,246,0.65);
+    }
+
+    /* ══ Stats panel ══════════════════════════════════════════════ */
+    .stats-panel {
+      background: var(--white);
+      border-left: 1px solid var(--silver);
+      overflow-y: auto;
+      padding: 18px 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--silver) transparent;
+    }
+
+    .stats-panel::-webkit-scrollbar       { width: 4px; }
+    .stats-panel::-webkit-scrollbar-track { background: transparent; }
+    .stats-panel::-webkit-scrollbar-thumb { background: var(--silver); border-radius: 4px; }
+
+    /* ══ Rep card ═════════════════════════════════════════════════ */
+    .rep-card {
+      background: var(--lead);
+      border-radius: var(--r);
+      padding: 20px 20px 18px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .rep-card::before {
+      content: '';
+      position: absolute;
+      top: -50px; right: -40px;
+      width: 160px; height: 160px;
+      background: radial-gradient(circle, rgba(243,186,96,0.16) 0%, transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .rep-card::after {
+      content: '';
+      position: absolute;
+      bottom: -55px; left: -35px;
+      width: 170px; height: 170px;
+      background: radial-gradient(circle, rgba(224,219,243,0.07) 0%, transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .rep-eyebrow {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--haze);
+      margin-bottom: 4px;
+      position: relative;
+    }
+
+    .rep-number {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 900;
+      font-size: 5.5rem;
+      line-height: 1;
+      color: var(--amber);
+      text-shadow: 0 0 50px rgba(243,186,96,0.28);
+      transition: transform 0.14s cubic-bezier(0.34,1.56,0.64,1);
+      position: relative;
+    }
+
+    .rep-number.bump { transform: scale(1.16); }
+
+    .rep-unit {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--haze);
+      margin-top: 2px;
+      position: relative;
+    }
+
+    /* ══ Metrics grid ════════════════════════════════════════════ */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .metric-card {
+      background: var(--white);
+      border: 1.5px solid var(--silver);
+      border-radius: var(--r);
+      padding: 14px 15px;
+    }
+
+    .metric-label {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+      color: var(--dream);
+      margin-bottom: 5px;
+    }
+
+    .metric-value {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 1.85rem;
+      line-height: 1;
+      color: var(--lead);
+      transition: color 0.3s;
+    }
+
+    .metric-value.up   { color: var(--green); }
+    .metric-value.down { color: var(--amber); }
+    .metric-value.idle { color: var(--dream); }
+
+    /* ══ Form section ════════════════════════════════════════════ */
+    .section-header {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--haze);
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--silver);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .form-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .form-card {
+      background: var(--white);
+      border: 1.5px solid var(--silver);
+      border-left: 3px solid var(--dream);
+      border-radius: var(--r);
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      transition: border-color 0.32s ease,
+                  border-left-color 0.32s ease,
+                  background 0.32s ease;
+    }
+
+    .form-card.ok {
+      border-color: rgba(62,207,142,0.3);
+      border-left-color: var(--green);
+      background: rgba(62,207,142,0.03);
+    }
+
+    .form-card.fail {
+      border-color: rgba(240,82,82,0.3);
+      border-left-color: var(--red);
+      background: rgba(240,82,82,0.03);
+    }
+
+    .form-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+      background: var(--silver);
+      color: var(--dream);
+      transition: background 0.32s, color 0.32s;
+    }
+
+    .form-card.ok   .form-icon { background: rgba(62,207,142,0.15); color: var(--green); }
+    .form-card.fail .form-icon { background: rgba(240,82,82,0.15);  color: var(--red); }
+
+    .form-body { flex: 1; min-width: 0; }
+
+    .form-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--lead);
+      margin-bottom: 2px;
+    }
+
+    .form-msg {
+      font-size: 0.68rem;
+      color: var(--haze);
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: color 0.32s;
+    }
+
+    .form-card.fail .form-msg { color: rgba(240,82,82,0.85); }
+
+    .form-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      padding: 4px 8px;
+      border-radius: 5px;
+      flex-shrink: 0;
+      background: rgba(182,177,192,0.18);
+      color: var(--dream);
+      transition: background 0.32s, color 0.32s;
+    }
+
+    .form-card.ok   .form-badge { background: rgba(62,207,142,0.14); color: var(--green); }
+    .form-card.fail .form-badge { background: rgba(240,82,82,0.14);  color: var(--red); }
+
+    /* ══ AI Coach card ════════════════════════════════════════════ */
+    .tip-card {
+      background: var(--lead);
+      border-radius: var(--r);
+      padding: 20px 20px 18px;
+      flex-shrink: 0;
+      border: 1px solid rgba(243,186,96,0.18);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .tip-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(243,186,96,0.06) 0%, transparent 55%);
+      pointer-events: none;
+    }
+
+    .tip-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .tip-label {
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--amber);
+    }
+
+    .tip-badge {
+      font-size: 0.52rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(243,186,96,0.55);
+      background: rgba(243,186,96,0.09);
+      border: 1px solid rgba(243,186,96,0.18);
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+
+    .tip-text {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1.15;
+      color: var(--white);
+      letter-spacing: 0.01em;
+      transition: opacity 0.25s;
+      min-height: 2.3rem;
+      position: relative;
+    }
+
+    .tip-text.loading { opacity: 0.3; }
+
+    /* Typing dots */
+    .typing-dots {
+      display: none;
+      gap: 5px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    .typing-dots.visible { display: flex; }
+
+    .typing-dots span {
+      width: 6px;
+      height: 6px;
+      background: var(--amber);
+      border-radius: 50%;
+      animation: dot-bounce 1.2s infinite ease-in-out;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes dot-bounce {
+      0%, 80%, 100% { transform: scale(0.65); opacity: 0.35; }
+      40%           { transform: scale(1);    opacity: 1; }
+    }
+
+    /* ══ Divider ══════════════════════════════════════════════════ */
+    .divider {
+      height: 1px;
+      background: var(--silver);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+
+<body>
+<div class="app">
+
+  <!-- ──────────── Header ──────────── -->
+  <header>
+    <div class="logo">
+      <div class="logo-mark">🏋</div>
+      SQUAT <em>TRAINER</em>
+    </div>
+
+    <div class="header-center">
+      <div class="timer" id="timer">00:00</div>
+      <div class="status">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-text" id="statusText">No Signal</span>
+      </div>
+    </div>
+
+    <button class="btn-reset" onclick="resetSession()">↺&nbsp; Reset</button>
+  </header>
+
+  <!-- ──────────── Main ──────────── -->
+  <div class="main">
+
+    <!-- Video panel -->
+    <div class="video-panel">
+      <img id="videoFeed" src="/video_feed" alt="Live camera feed" />
+      <div class="video-badge">
+        <div class="video-badge-dot"></div>
+        <span class="video-badge-text">Live · MediaPipe Pose</span>
+      </div>
+    </div>
+
+    <!-- Stats panel -->
+    <aside class="stats-panel">
+
+      <!-- Rep counter -->
+      <div class="rep-card">
+        <div class="rep-eyebrow">Completed</div>
+        <div class="rep-number" id="repCount">0</div>
+        <div class="rep-unit">Squats</div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Phase</div>
+          <div class="metric-value idle" id="phaseVal">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Knee Angle</div>
+          <div class="metric-value" id="kneeVal">—</div>
+        </div>
+      </div>
+
+      <!-- AI Coach — prominent, above form cards -->
+      <div class="tip-card">
+        <div class="tip-header">
+          <div class="tip-label">⚡ AI Coach</div>
+          <div class="tip-badge">Groq · Llama 3.1</div>
+        </div>
+        <div class="tip-text" id="tipText">Get in position to begin</div>
+        <div class="typing-dots" id="typingDots">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <!-- Form analysis -->
+      <div class="section-header">Form Analysis</div>
+
+      <div class="form-cards">
+
+        <div class="form-card" id="card-depth">
+          <div class="form-icon" id="icon-depth">📐</div>
+          <div class="form-body">
+            <div class="form-name">Squat Depth</div>
+            <div class="form-msg" id="msg-depth">Waiting for movement…</div>
+          </div>
+          <div class="form-badge" id="badge-depth">—</div>
+        </div>
+
+        <div class="form-card" id="card-knees">
+          <div class="form-icon" id="icon-knees">🦵</div>
+          <div class="form-body">
+            <div class="form-name">Knee Alignment</div>
+            <div class="form-msg" id="msg-knees">Waiting for movement…</div>
+          </div>
+          <div class="form-badge" id="badge-knees">—</div>
+        </div>
+
+        <div class="form-card" id="card-back">
+          <div class="form-icon" id="icon-back">🧍</div>
+          <div class="form-body">
+            <div class="form-name">Back Posture</div>
+            <div class="form-msg" id="msg-back">Waiting for movement…</div>
+          </div>
+          <div class="form-badge" id="badge-back">—</div>
+        </div>
+
+      </div>
+
+      <div class="divider"></div>
+
+    </aside>
+  </div>
+</div>
+
+<script>
+  /* ── State ─────────────────────────────────────────────────── */
+  let prevReps     = 0;
+  let sessionStart = Date.now();
+
+  const FORM_META = {
+    depth: { icon: '📐', okMsg: 'Good depth — parallel achieved'  },
+    knees: { icon: '🦵', okMsg: 'Knees tracking well over toes'   },
+    back:  { icon: '🧍', okMsg: 'Spine neutral, chest tall'       },
+  };
+
+  const TIPS_IDLE = 'Stand in frame with your full body visible. Begin squatting when ready.';
+
+  /* ── Session timer ─────────────────────────────────────────── */
+  setInterval(() => {
+    const s  = Math.floor((Date.now() - sessionStart) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    document.getElementById('timer').textContent = `${mm}:${ss}`;
+  }, 1000);
+
+  /* ── WebSocket ─────────────────────────────────────────────── */
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws    = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onmessage = (e) => updateUI(JSON.parse(e.data));
+    ws.onclose   = () => setTimeout(connectWS, 1500);
+    ws.onerror   = () => ws.close();
+  }
+
+  connectWS();
+
+  /* ── Reset ─────────────────────────────────────────────────── */
+  async function resetSession() {
+    await fetch('/reset', { method: 'POST' });
+    sessionStart = Date.now();
+    prevReps     = 0;
+    document.getElementById('repCount').textContent = '0';
+  }
+
+  /* ── Update UI ─────────────────────────────────────────────── */
+  function updateUI(d) {
+    /* Status indicator */
+    const dot = document.getElementById('statusDot');
+    const txt = document.getElementById('statusText');
+    if (d.active) {
+      dot.classList.add('live');
+      txt.classList.add('live');
+      txt.textContent = 'Detecting';
+    } else {
+      dot.classList.remove('live');
+      txt.classList.remove('live');
+      txt.textContent = 'No Signal';
+    }
+
+    /* Rep counter with bump animation */
+    const repEl = document.getElementById('repCount');
+    if (d.reps !== prevReps) {
+      repEl.classList.add('bump');
+      setTimeout(() => repEl.classList.remove('bump'), 220);
+      prevReps = d.reps;
+    }
+    repEl.textContent = d.reps;
+
+    /* Phase */
+    const phaseEl = document.getElementById('phaseVal');
+    phaseEl.className = 'metric-value';
+    if (d.stage === 'up') {
+      phaseEl.textContent = 'UP';
+      phaseEl.classList.add('up');
+    } else if (d.stage === 'down') {
+      phaseEl.textContent = 'DOWN';
+      phaseEl.classList.add('down');
+    } else {
+      phaseEl.textContent = '—';
+      phaseEl.classList.add('idle');
+    }
+
+    /* Knee angle */
+    document.getElementById('kneeVal').textContent = d.active ? `${d.knee_angle}°` : '—';
+
+    /* Form cards */
+    const tips = [];
+    for (const [key, meta] of Object.entries(FORM_META)) {
+      const entry = d.form[key];
+      const card  = document.getElementById(`card-${key}`);
+      const icon  = document.getElementById(`icon-${key}`);
+      const msg   = document.getElementById(`msg-${key}`);
+      const badge = document.getElementById(`badge-${key}`);
+
+      if (!entry) {
+        card.className   = 'form-card';
+        icon.textContent = meta.icon;
+        msg.textContent  = 'Waiting for movement…';
+        badge.textContent = '—';
+      } else if (entry.ok) {
+        card.className   = 'form-card ok';
+        icon.textContent = '✓';
+        msg.textContent  = meta.okMsg;
+        badge.textContent = 'OK';
+      } else {
+        card.className   = 'form-card fail';
+        icon.textContent = '✗';
+        msg.textContent  = entry.msg;
+        badge.textContent = 'FIX';
+        tips.push(entry.msg);
+      }
+    }
+
+    /* AI Coach feedback */
+    const tipEl   = document.getElementById('tipText');
+    const dotsEl  = document.getElementById('typingDots');
+
+    if (d.llm_loading) {
+      tipEl.classList.add('loading');
+      dotsEl.classList.add('visible');
+    } else {
+      tipEl.classList.remove('loading');
+      dotsEl.classList.remove('visible');
+
+      if (d.llm_feedback) {
+        tipEl.textContent = d.llm_feedback;
+      } else if (!d.active) {
+        tipEl.textContent = TIPS_IDLE;
+      }
+      // keep previous text if active but no feedback yet
+    }
+  }
+</script>
+</body>
+</html>
