@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import mediapipe as mp
@@ -136,10 +137,19 @@ _workout: dict = {
     "reps": 0, "stage": None, "knee_angle": 180.0,
     "form": {}, "active": False, "_reset": False,
     "angles": {},
-    "llm_feedback": None,   # current AI coaching message
-    "llm_loading":  False,  # True while Groq is generating
+    "llm_cue":      None,   # short coaching command
+    "llm_reason":   None,   # explanation of why
+    "llm_loading":  False,
 }
 _workout_lock = threading.Lock()
+
+# Rep angle buffer — collects snapshots during the down phase of each rep
+_rep_buffer:      list[dict] = []
+_rep_buffer_lock: threading.Lock = threading.Lock()
+
+# Completed rep stats waiting to be sent to Groq (set by processing thread)
+_pending_rep:      dict | None = None
+_pending_rep_lock: threading.Lock = threading.Lock()
 
 _latest_result = None
 _result_lock   = threading.Lock()
@@ -166,6 +176,23 @@ _mp_options = PoseLandmarkerOptions(
     running_mode=VisionRunningMode.LIVE_STREAM,
     result_callback=_on_result,
 )
+
+
+# ── Rep aggregation ────────────────────────────────────────────────────────────
+
+def _aggregate_rep(buf: list[dict], rep_num: int) -> dict:
+    """Summarise the worst-case metrics across all frames of a single rep."""
+    return {
+        "reps":           rep_num,
+        "min_knee_l":     min(f["knee_l"]    for f in buf),
+        "min_knee_r":     min(f["knee_r"]    for f in buf),
+        "max_torso_lean": max(f["torso_lean"] for f in buf),
+        "knee_caved_l":   any(f["left_caved"]  for f in buf),
+        "knee_caved_r":   any(f["right_caved"] for f in buf),
+        "max_asym":       max(abs(f["knee_l"] - f["knee_r"]) for f in buf),
+        "min_hip_l":      min(f["hip_l"] for f in buf),
+        "min_hip_r":      min(f["hip_r"] for f in buf),
+    }
 
 
 # ── Processing thread ──────────────────────────────────────────────────────────
@@ -204,9 +231,22 @@ def _processing_loop():
                 if knee_avg > 160:
                     if stage == "down":
                         reps += 1
+                        # Rep complete — aggregate buffer and queue for Groq
+                        with _rep_buffer_lock:
+                            if _rep_buffer:
+                                stats = _aggregate_rep(_rep_buffer.copy(), reps)
+                                with _pending_rep_lock:
+                                    global _pending_rep
+                                    _pending_rep = stats
+                                _rep_buffer.clear()
                     stage = "up"
                 elif knee_avg < 100:
                     stage = "down"
+
+                # Collect angle snapshots during descent
+                if stage == "down" and angles:
+                    with _rep_buffer_lock:
+                        _rep_buffer.append(dict(angles))
 
                 issues = _check_form(angles, stage)
                 _draw_pose(frame, lms, issues)
@@ -217,8 +257,11 @@ def _processing_loop():
                     stage  = None
                     issues = {}
                     angles = {}
-                    _workout["_reset"]       = False
-                    _workout["llm_feedback"] = None
+                    _workout["_reset"]     = False
+                    _workout["llm_cue"]    = None
+                    _workout["llm_reason"] = None
+                    with _rep_buffer_lock:
+                        _rep_buffer.clear()
 
                 _workout["reps"]       = reps
                 _workout["stage"]      = stage
@@ -234,104 +277,98 @@ def _processing_loop():
     cap.release()
 
 
-# ── Groq AI coaching loop ──────────────────────────────────────────────────────
+# ── Groq AI coaching ───────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = (
-    "You are a real-time squat coach. Output EXACTLY one short cue — maximum 6 words. "
-    "No punctuation at the end. No filler words. No praise unless form is perfect. "
-    "Sound like a coach calling out a cue mid-rep. "
-    "Examples of good outputs: "
-    "'Heels flat on the floor' | "
-    "'Push your knees out' | "
-    "'Chest up, stop rounding' | "
-    "'Go deeper, hit parallel' | "
-    "'Drive through your heels' | "
-    "'Brace your core' | "
-    "'Keep your back straight' | "
-    "'Great depth, keep it up'. "
-    "Pick the single most critical fix. If form is good, give a positive drive cue."
-)
+_SYSTEM_PROMPT = """\
+You are an expert squat coach analyzing a completed rep. The athlete can see your feedback on screen.
+Return ONLY a JSON object — no markdown, no explanation outside the JSON.
+
+Format:
+{"cue": "...", "reason": "..."}
+
+Rules:
+- "cue": The single most important fix as a direct command. Max 6 words, no trailing punctuation.
+  If form is good: a short motivational drive cue (e.g. "Keep that depth up").
+- "reason": One sentence (max 18 words) that explains the detected issue with specific numbers,
+  or genuine encouragement if form is clean.
+  Bad: "Your form needs work."
+  Good: "Left knee angle only reached 102° — parallel needs below 90°."
+  Good: "Torso leaned 58° forward — brace core to keep chest up."
+  Good: "Both knees hit 87° with perfect alignment — excellent depth."
+"""
 
 
-def _build_user_prompt(angles: dict) -> str:
-    stage = angles.get("stage") or "up"
-    reps  = angles.get("reps",  0)
-    kl    = angles.get("knee_l", 180)
-    kr    = angles.get("knee_r", 180)
-    torso = angles.get("torso_lean", 0)
-    hl    = angles.get("hip_l", 180)
-    hr    = angles.get("hip_r", 180)
+def _build_rep_prompt(s: dict) -> str:
+    kl, kr = s["min_knee_l"], s["min_knee_r"]
+    depth_l = "✓ parallel" if kl <= 90 else f"✗ only {kl:.0f}° (need ≤90°)"
+    depth_r = "✓ parallel" if kr <= 90 else f"✗ only {kr:.0f}° (need ≤90°)"
 
-    issues = []
-    if angles.get("right_caved") or angles.get("left_caved"):
-        issues.append("knees caving inward")
-    if torso > 50:
-        issues.append(f"torso leaning {torso:.0f}° forward (back rounding)")
-    if stage == "down" and min(kl, kr) > 95:
-        issues.append(f"not deep enough — knee angle {min(kl,kr):.0f}° (need <90°)")
-    asym = abs(kl - kr)
-    if asym > 12:
-        issues.append(f"left/right asymmetry: {kl:.0f}° vs {kr:.0f}°")
+    cave_parts = []
+    if s["knee_caved_l"]: cave_parts.append("left")
+    if s["knee_caved_r"]: cave_parts.append("right")
+    cave_str = f"{' & '.join(cave_parts)} knee(s) caved inward" if cave_parts else "none"
 
-    issues_str = "; ".join(issues) if issues else "none — form looks good"
+    torso = s["max_torso_lean"]
+    back_str = f"{torso:.0f}° ({'✓ OK' if torso <= 50 else '✗ too far, limit 50°'})"
+
+    asym = s["max_asym"]
+    asym_str = f"{asym:.0f}° ({'✓ balanced' if asym <= 10 else '✗ significant imbalance'})"
 
     return (
-        f"Rep {reps}, phase {stage}. "
-        f"Knee angles L={kl:.0f}° R={kr:.0f}°, torso lean={torso:.0f}°, "
-        f"hip flexion L={hl:.0f}° R={hr:.0f}°. "
-        f"Issues detected: {issues_str}. "
-        f"Give the single most important 6-word cue right now."
+        f"Rep #{s['reps']} just completed. Worst-case angles during the entire rep:\n"
+        f"Left knee depth:  {depth_l}\n"
+        f"Right knee depth: {depth_r}\n"
+        f"Torso lean:       {back_str}\n"
+        f"Knee cave:        {cave_str}\n"
+        f"L/R asymmetry:    {asym_str}\n"
+        f"Hip flexion:      L={s['min_hip_l']:.0f}°  R={s['min_hip_r']:.0f}°\n\n"
+        f"Return the JSON coaching feedback."
     )
 
 
 async def _llm_loop():
-    client       = AsyncGroq()
-    last_called  = 0.0
-    last_reps    = -1
-    COOLDOWN     = 3.0  # seconds between calls (unless new rep)
+    global _pending_rep
+    client = AsyncGroq()
 
     while True:
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.15)
 
-        with _workout_lock:
-            active = _workout["active"]
-            reps   = _workout["reps"]
-            angles = dict(_workout["angles"])
+        # Grab pending rep data if available
+        with _pending_rep_lock:
+            rep_data = _pending_rep
+            if rep_data:
+                _pending_rep = None
 
-        if not active or not angles:
+        if not rep_data:
             continue
-
-        now       = time.time()
-        new_rep   = reps != last_reps
-        timed_out = (now - last_called) >= COOLDOWN
-
-        if not (new_rep or timed_out):
-            continue
-
-        last_called = now
-        last_reps   = reps
 
         with _workout_lock:
             _workout["llm_loading"] = True
 
+        cue = reason = None
         try:
             resp = await client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user",   "content": _build_user_prompt(angles)},
+                    {"role": "user",   "content": _build_rep_prompt(rep_data)},
                 ],
-                max_tokens=80,
-                temperature=0.5,
+                max_tokens=120,
+                temperature=0.4,
+                response_format={"type": "json_object"},
             )
-            feedback = resp.choices[0].message.content.strip()
+            raw  = resp.choices[0].message.content.strip()
+            parsed = json.loads(raw)
+            cue    = parsed.get("cue",    "").strip()
+            reason = parsed.get("reason", "").strip()
+            print(f"[Groq] rep {rep_data['reps']}: {cue} | {reason}")
         except Exception as exc:
             print(f"[Groq] error: {exc}")
-            feedback = None
 
         with _workout_lock:
-            if feedback:
-                _workout["llm_feedback"] = feedback
+            if cue:
+                _workout["llm_cue"]    = cue
+                _workout["llm_reason"] = reason
             _workout["llm_loading"] = False
 
 
@@ -390,13 +427,14 @@ async def ws_endpoint(websocket: WebSocket):
         while True:
             with _workout_lock:
                 data = {
-                    "reps":         _workout["reps"],
-                    "stage":        _workout["stage"],
-                    "knee_angle":   _workout["knee_angle"],
-                    "form":         _workout["form"],
-                    "active":       _workout["active"],
-                    "llm_feedback": _workout["llm_feedback"],
-                    "llm_loading":  _workout["llm_loading"],
+                    "reps":        _workout["reps"],
+                    "stage":       _workout["stage"],
+                    "knee_angle":  _workout["knee_angle"],
+                    "form":        _workout["form"],
+                    "active":      _workout["active"],
+                    "llm_cue":     _workout["llm_cue"],
+                    "llm_reason":  _workout["llm_reason"],
+                    "llm_loading": _workout["llm_loading"],
                 }
             await websocket.send_text(json.dumps(data))
             await asyncio.sleep(0.1)

@@ -497,7 +497,17 @@
       position: relative;
     }
 
-    .tip-text.loading { opacity: 0.3; }
+    .tip-reason {
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: var(--dream);
+      line-height: 1.5;
+      margin-top: 8px;
+      transition: opacity 0.25s;
+    }
+
+    .tip-text.loading,
+    .tip-reason.loading { opacity: 0.3; }
 
     /* Typing dots */
     .typing-dots {
@@ -530,6 +540,110 @@
       height: 1px;
       background: var(--silver);
       flex-shrink: 0;
+    }
+
+    /* ══ Feedback history ═════════════════════════════════════════ */
+    .history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--silver);
+      flex-shrink: 0;
+    }
+
+    .history-title {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--haze);
+    }
+
+    .history-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6rem;
+      font-weight: 600;
+      color: var(--dream);
+      background: var(--silver);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      flex-shrink: 0;
+    }
+
+    .history-empty {
+      text-align: center;
+      font-size: 0.72rem;
+      color: var(--dream);
+      padding: 18px 0 8px;
+      font-style: italic;
+    }
+
+    .history-entry {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      background: var(--white);
+      border: 1.5px solid var(--silver);
+      border-left: 3px solid var(--dream);
+      border-radius: 8px;
+      padding: 9px 12px;
+      animation: slide-in 0.2s ease;
+    }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .history-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+      padding-top: 1px;
+    }
+
+    .history-rep {
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--amber);
+      background: rgba(243,186,96,0.12);
+      border: 1px solid rgba(243,186,96,0.2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .history-time {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.55rem;
+      color: var(--dream);
+      white-space: nowrap;
+    }
+
+    .history-text {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--lead);
+      line-height: 1.4;
+      flex: 1;
+    }
+
+    .history-reason {
+      font-size: 0.7rem;
+      font-weight: 400;
+      color: var(--haze);
+      line-height: 1.4;
+      margin-top: 3px;
     }
   </style>
 </head>
@@ -596,6 +710,7 @@
           <div class="tip-badge">Groq · Llama 3.1</div>
         </div>
         <div class="tip-text" id="tipText">Get in position to begin</div>
+        <div class="tip-reason" id="tipReason"></div>
         <div class="typing-dots" id="typingDots">
           <span></span><span></span><span></span>
         </div>
@@ -637,6 +752,16 @@
 
       <div class="divider"></div>
 
+      <!-- Feedback history -->
+      <div class="history-header">
+        <span class="history-title">Session Log</span>
+        <span class="history-count" id="historyCount">0</span>
+      </div>
+
+      <div class="history-list" id="historyList">
+        <div class="history-empty" id="historyEmpty">No feedback yet — start squatting</div>
+      </div>
+
     </aside>
   </div>
 </div>
@@ -645,6 +770,8 @@
   /* ── State ─────────────────────────────────────────────────── */
   let prevReps     = 0;
   let sessionStart = Date.now();
+  let lastFeedback = null;
+  let historyCount = 0;
 
   const FORM_META = {
     depth: { icon: '📐', okMsg: 'Good depth — parallel achieved'  },
@@ -653,6 +780,40 @@
   };
 
   const TIPS_IDLE = 'Stand in frame with your full body visible. Begin squatting when ready.';
+
+  /* ── History helpers ───────────────────────────────────────── */
+  function addHistoryEntry(cue, reason, reps) {
+    const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+    const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const ss = String(elapsed % 60).padStart(2, '0');
+
+    document.getElementById('historyEmpty')?.remove();
+
+    const entry = document.createElement('div');
+    entry.className = 'history-entry';
+    entry.innerHTML = `
+      <div class="history-meta">
+        <span class="history-rep">Rep&nbsp;${reps}</span>
+        <span class="history-time">${mm}:${ss}</span>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="history-text">${cue}</div>
+        ${reason ? `<div class="history-reason">${reason}</div>` : ''}
+      </div>`;
+
+    document.getElementById('historyList').prepend(entry);
+
+    historyCount++;
+    document.getElementById('historyCount').textContent = historyCount;
+  }
+
+  function clearHistory() {
+    const list = document.getElementById('historyList');
+    list.innerHTML = '<div class="history-empty" id="historyEmpty">No feedback yet — start squatting</div>';
+    historyCount = 0;
+    document.getElementById('historyCount').textContent = 0;
+    lastFeedback = null;
+  }
 
   /* ── Session timer ─────────────────────────────────────────── */
   setInterval(() => {
@@ -679,6 +840,9 @@
     sessionStart = Date.now();
     prevReps     = 0;
     document.getElementById('repCount').textContent = '0';
+    document.getElementById('tipText').textContent    = TIPS_IDLE;
+    document.getElementById('tipReason').textContent  = '';
+    clearHistory();
   }
 
   /* ── Update UI ─────────────────────────────────────────────── */
@@ -751,22 +915,30 @@
     }
 
     /* AI Coach feedback */
-    const tipEl   = document.getElementById('tipText');
-    const dotsEl  = document.getElementById('typingDots');
+    const tipEl    = document.getElementById('tipText');
+    const reasonEl = document.getElementById('tipReason');
+    const dotsEl   = document.getElementById('typingDots');
 
     if (d.llm_loading) {
       tipEl.classList.add('loading');
+      reasonEl.classList.add('loading');
       dotsEl.classList.add('visible');
     } else {
       tipEl.classList.remove('loading');
+      reasonEl.classList.remove('loading');
       dotsEl.classList.remove('visible');
 
-      if (d.llm_feedback) {
-        tipEl.textContent = d.llm_feedback;
+      if (d.llm_cue) {
+        if (d.llm_cue !== lastFeedback) {
+          addHistoryEntry(d.llm_cue, d.llm_reason, d.reps);
+          lastFeedback = d.llm_cue;
+        }
+        tipEl.textContent    = d.llm_cue;
+        reasonEl.textContent = d.llm_reason || '';
       } else if (!d.active) {
-        tipEl.textContent = TIPS_IDLE;
+        tipEl.textContent    = TIPS_IDLE;
+        reasonEl.textContent = '';
       }
-      // keep previous text if active but no feedback yet
     }
   }
 </script>
